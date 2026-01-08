@@ -5,13 +5,13 @@ import { HistorySection } from './components/HistorySection';
 import { VideoAnalysisSection } from './components/VideoAnalysisSection';
 import { AppState, Language, Duration, HistoryItem, VideoScene, ScriptRow } from './types';
 import { 
-    generateCampaign, 
-    regenerateVisualsOnly, 
-    regenerateStrategyOnly, 
+    generateProductGrid,
+    generateScriptAndPrompt,
     analyzeVideoContent, 
     captureVideoFrames, 
     generateSceneImage,
-    regenerateScriptRow
+    regenerateScriptRow,
+    composeNineGridImage
 } from './services/geminiService';
 import { Play, Key, AlertTriangle } from 'lucide-react';
 
@@ -27,14 +27,18 @@ const App: React.FC = () => {
     
     isAnalyzing: false,
     videoAnalysis: null,
+    selectedFeatures: [],
 
     productDescription: '',
     language: Language.ENGLISH,
     duration: Duration.SHORT,
     variantCount: 1, 
-    isGenerating: false,
-    isRegeneratingVisual: false,
-    isRegeneratingStrategy: false,
+    
+    // Granular states
+    isGeneratingProductGrid: false,
+    isGeneratingScripts: false,
+    isComposingFinalGrid: false,
+    
     generatedContent: null,
     history: [],
     error: null,
@@ -119,7 +123,8 @@ const App: React.FC = () => {
         ...prev,
         referenceVideo: file,
         referenceVideoPreview: url,
-        videoAnalysis: null // Reset analysis on new video
+        videoAnalysis: null,
+        selectedFeatures: []
       }));
     }
   };
@@ -130,7 +135,8 @@ const App: React.FC = () => {
       ...prev,
       referenceVideo: null,
       referenceVideoPreview: null,
-      videoAnalysis: null
+      videoAnalysis: null,
+      selectedFeatures: []
     }));
   };
 
@@ -141,25 +147,23 @@ const App: React.FC = () => {
     setState(prev => ({ ...prev, isAnalyzing: true, error: null }));
     
     try {
-        // 1. Get structured data from Gemini
         const rawAnalysis = await analyzeVideoContent(state.referenceVideo);
-        
-        // 2. Extract timestamps for frame capture
-        const captureTargets = rawAnalysis.map(s => ({ start: (s as any).rawStartTime }));
-        
-        // 3. Capture frames
+        const captureTargets = rawAnalysis.scenes.map(s => ({ start: (s as any).rawStartTime }));
         const screenshots = await captureVideoFrames(state.referenceVideo, captureTargets);
 
-        // 4. Merge
-        const finalAnalysis: VideoScene[] = rawAnalysis.map((scene, idx) => ({
+        const finalScenes: VideoScene[] = rawAnalysis.scenes.map((scene, idx) => ({
             ...scene,
             screenshot: screenshots[idx] || ''
         }));
+        
+        // Default select all features (using the text as key)
+        const featureKeys = rawAnalysis.features.map(f => f.text);
 
         setState(prev => ({
             ...prev,
             isAnalyzing: false,
-            videoAnalysis: finalAnalysis
+            videoAnalysis: { scenes: finalScenes, features: rawAnalysis.features },
+            selectedFeatures: featureKeys
         }));
 
     } catch (error) {
@@ -167,45 +171,104 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSubmit = async () => {
-    if (state.productImages.length === 0 || !state.productDescription) return;
+  const handleToggleFeature = (feature: string) => {
+      setState(prev => {
+          const current = prev.selectedFeatures;
+          if (current.includes(feature)) {
+              return { ...prev, selectedFeatures: current.filter(f => f !== feature) };
+          } else {
+              return { ...prev, selectedFeatures: [...current, feature] };
+          }
+      });
+  };
 
-    setState((prev) => ({ ...prev, isGenerating: true, error: null, generatedContent: null }));
+  // --- Granular Generation Handlers ---
 
-    try {
-      const content = await generateCampaign(
-        state.productImages,
-        state.videoAnalysis, // Pass analysis instead of raw video
-        state.productDescription,
-        state.language,
-        state.duration,
-        state.variantCount
-      );
+  const handleGenerateProductGrid = async () => {
+      if (state.productImages.length === 0) return;
+      setState(prev => ({ ...prev, isGeneratingProductGrid: true, error: null }));
+      
+      try {
+          const imageParts = await Promise.all(state.productImages.map(file => 
+             // Import dynamically or assume service is available
+             import('./services/geminiService').then(mod => mod.fileToGenerativePart(file))
+          ));
+          
+          const gridBase64 = await generateProductGrid(imageParts, state.productDescription);
+          
+          setState(prev => ({
+              ...prev,
+              isGeneratingProductGrid: false,
+              generatedContent: {
+                  ...prev.generatedContent,
+                  productReferenceBase64: gridBase64,
+                  variants: prev.generatedContent?.variants || [],
+                  visualAssetBase64: prev.generatedContent?.visualAssetBase64 || null
+              } as any
+          }));
+      } catch (error) {
+          setState(prev => ({ ...prev, isGeneratingProductGrid: false, error: handleError(error) }));
+      }
+  };
 
-      const newItem: HistoryItem = {
-        id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        productImages: state.productImages,
-        productImagePreviews: state.productImagePreviews,
-        referenceVideo: state.referenceVideo,
-        referenceVideoPreview: state.referenceVideoPreview,
-        videoAnalysis: state.videoAnalysis,
-        productDescription: state.productDescription,
-        language: state.language,
-        duration: state.duration,
-        variantCount: state.variantCount,
-        generatedContent: content
-      };
+  const handleGenerateScripts = async () => {
+      if (!state.videoAnalysis || state.selectedFeatures.length === 0) return;
+      setState(prev => ({ ...prev, isGeneratingScripts: true, error: null }));
 
-      setState((prev) => ({
-        ...prev,
-        isGenerating: false,
-        generatedContent: content,
-        history: [newItem, ...prev.history]
-      }));
-    } catch (error: any) {
-      setState((prev) => ({ ...prev, isGenerating: false, error: handleError(error) }));
-    }
+      try {
+          const imageParts = await Promise.all(state.productImages.map(file => 
+             import('./services/geminiService').then(mod => mod.fileToGenerativePart(file))
+          ));
+
+          const variants = await generateScriptAndPrompt(
+              imageParts,
+              state.videoAnalysis,
+              state.selectedFeatures,
+              state.productDescription,
+              state.language,
+              state.duration,
+              state.variantCount
+          );
+
+          setState(prev => ({
+              ...prev,
+              isGeneratingScripts: false,
+              generatedContent: {
+                  ...prev.generatedContent,
+                  variants: variants,
+                  productReferenceBase64: prev.generatedContent?.productReferenceBase64 || null,
+                  visualAssetBase64: prev.generatedContent?.visualAssetBase64 || null
+              } as any
+          }));
+      } catch (error) {
+          setState(prev => ({ ...prev, isGeneratingScripts: false, error: handleError(error) }));
+      }
+  };
+
+  const handleComposeFinalGrid = async () => {
+      const activeVariant = state.generatedContent?.variants[0]; // Simplified for active tab logic
+      if (!activeVariant) return;
+      
+      const visuals = activeVariant.script.map(r => r.generatedVisual).filter(v => !!v) as string[];
+      if (visuals.length === 0) return;
+
+      setState(prev => ({ ...prev, isComposingFinalGrid: true }));
+      try {
+          const grid = await composeNineGridImage(visuals);
+          setState(prev => ({
+              ...prev,
+              isComposingFinalGrid: false,
+              generatedContent: {
+                  ...prev.generatedContent,
+                  visualAssetBase64: grid,
+                  variants: prev.generatedContent?.variants || [],
+                  productReferenceBase64: prev.generatedContent?.productReferenceBase64 || null
+              } as any
+          }));
+          
+      } catch (error) {
+           setState(prev => ({ ...prev, isComposingFinalGrid: false, error: handleError(error) }));
+      }
   };
 
   // --- Result Action Handlers ---
@@ -218,6 +281,7 @@ const App: React.FC = () => {
       referenceVideo: item.referenceVideo,
       referenceVideoPreview: item.referenceVideoPreview,
       videoAnalysis: item.videoAnalysis,
+      selectedFeatures: item.selectedFeatures,
       productDescription: item.productDescription,
       language: item.language,
       duration: item.duration,
@@ -228,39 +292,11 @@ const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleRegenerateStrategy = async () => {
-    if (!state.generatedContent) return;
-    setState(prev => ({ ...prev, isRegeneratingStrategy: true, error: null }));
-    try {
-        const newVariants = await regenerateStrategyOnly(
-            state.productImages,
-            state.videoAnalysis,
-            state.productDescription,
-            state.language,
-            state.duration,
-            state.variantCount
-        );
-        setState(prev => ({
-            ...prev,
-            isRegeneratingStrategy: false,
-            generatedContent: prev.generatedContent ? {
-                ...prev.generatedContent,
-                variants: newVariants
-            } : null
-        }));
-    } catch (error) {
-        setState(prev => ({ ...prev, isRegeneratingStrategy: false, error: handleError(error) }));
-    }
-  };
-
   const handleGenerateSceneVisual = async (variantIndex: number, rowIndex: number, visualDesc: string) => {
-    // Optimistic Update: Set row loading state
     updateRowState(variantIndex, rowIndex, { isRegenerating: true });
     
     try {
-        // Get the reference image from state
         const refImage = state.generatedContent?.productReferenceBase64 || null;
-        
         const base64Image = await generateSceneImage(visualDesc, refImage);
         updateRowState(variantIndex, rowIndex, { isRegenerating: false, generatedVisual: base64Image });
     } catch (error) {
@@ -280,7 +316,6 @@ const App: React.FC = () => {
         
         const newRow = await regenerateScriptRow(row, context, state.language);
         
-        // Update state with new row
         setState(prev => {
             if (!prev.generatedContent) return prev;
             const newVariants = [...prev.generatedContent.variants];
@@ -300,13 +335,10 @@ const App: React.FC = () => {
       if (!state.generatedContent) return;
       const variant = state.generatedContent.variants[variantIndex];
       
-      // Mark all as loading
       variant.script.forEach((_, idx) => {
           if(!variant.script[idx].generatedVisual) updateRowState(variantIndex, idx, { isRegenerating: true });
       });
 
-      // Process in parallel (batches of 3 to not hit rate limits too hard)
-      // For simplicity in this demo, we do loop
       for (let i = 0; i < variant.script.length; i++) {
           const row = variant.script[i];
           if (!row.generatedVisual) {
@@ -315,7 +347,6 @@ const App: React.FC = () => {
       }
   };
 
-  // Helper to deep update a row
   const updateRowState = (vIdx: number, rIdx: number, updates: Partial<ScriptRow>) => {
       setState(prev => {
           if (!prev.generatedContent) return prev;
@@ -330,8 +361,7 @@ const App: React.FC = () => {
       });
   };
 
-  // Placeholder for old visual regen if needed, but we mostly use scene-based now
-  const handleRegenerateVisual = () => {}; 
+  const handleRegenerateStrategy = () => handleGenerateScripts(); 
 
   if (isKeyCheckLoading) {
     return <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
@@ -416,10 +446,6 @@ const App: React.FC = () => {
                 onRemoveVideo={handleRemoveVideo}
                 onAnalyzeVideo={handleAnalyzeVideo}
                 onDescriptionChange={(e) => setState(prev => ({ ...prev, productDescription: e.target.value }))}
-                onLanguageChange={(val) => setState(prev => ({ ...prev, language: val }))}
-                onDurationChange={(val) => setState(prev => ({ ...prev, duration: val }))}
-                onVariantCountChange={(val) => setState(prev => ({ ...prev, variantCount: val }))}
-                onSubmit={handleSubmit}
               />
 
               <HistorySection 
@@ -429,47 +455,33 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Column: Results */}
+          {/* Right Column: Generation Modules */}
           <div className="lg:col-span-8">
              
-             {/* New: Video Analysis Section */}
+             {/* Module 2: Analysis & Feature Selection */}
              <VideoAnalysisSection 
                 analysis={state.videoAnalysis} 
                 isLoading={state.isAnalyzing} 
+                selectedFeatures={state.selectedFeatures}
+                onToggleFeature={handleToggleFeature}
              />
 
-             {state.generatedContent ? (
-               <ResultSection 
+             {/* Modules 1, 3, 4: Generation Steps */}
+             {/* We show ResultSection always, but internal buttons control flow */}
+             <ResultSection 
                  state={state} 
-                 onRegenerateVisual={handleRegenerateVisual}
+                 onGenerateProductGrid={handleGenerateProductGrid}
+                 onGenerateScripts={handleGenerateScripts}
+                 onComposeFinalGrid={handleComposeFinalGrid}
                  onRegenerateStrategy={handleRegenerateStrategy}
                  onGenerateSceneVisual={handleGenerateSceneVisual}
                  onRegenerateRow={handleRegenerateRow}
                  onGenerateAllVisuals={handleGenerateAllVisuals}
+                 onToggleFeature={handleToggleFeature}
+                 onLanguageChange={(val) => setState(prev => ({ ...prev, language: val }))}
+                 onDurationChange={(val) => setState(prev => ({ ...prev, duration: val }))}
+                 onVariantCountChange={(val) => setState(prev => ({ ...prev, variantCount: val }))}
                />
-             ) : (
-               !state.isAnalyzing && !state.videoAnalysis && (
-                <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/30">
-                    {!state.isGenerating ? (
-                    <>
-                        <Play className="w-16 h-16 mb-4 opacity-20" />
-                        <p className="text-lg">Ready to generate your campaign</p>
-                        <p className="text-sm opacity-60">Upload video & analyze, or fill inputs to begin</p>
-                    </>
-                    ) : (
-                    <>
-                        <div className="relative w-16 h-16 mb-4">
-                        <div className="absolute inset-0 border-4 border-slate-700 rounded-full"></div>
-                        <div className="absolute inset-0 border-4 border-t-purple-500 rounded-full animate-spin"></div>
-                        </div>
-                        <p className="text-lg text-purple-200 animate-pulse">Designing Campaign...</p>
-                        <p className="text-sm text-slate-500 mt-2">1. Generating Product Reference Grid...</p>
-                        <p className="text-sm text-slate-500">2. Analyzing Video & Strategy...</p>
-                    </>
-                    )}
-                </div>
-               )
-             )}
           </div>
 
         </div>

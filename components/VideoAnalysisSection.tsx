@@ -1,10 +1,12 @@
 import React from 'react';
-import { VideoScene } from '../types';
-import { Play, Clock, MessageSquare, Globe, AlignLeft } from 'lucide-react';
+import { VideoAnalysisResult } from '../types';
+import { Play, MessageSquare, AlignLeft } from 'lucide-react';
 
 interface VideoAnalysisSectionProps {
-  analysis: VideoScene[] | null;
+  analysis: VideoAnalysisResult | null;
   isLoading: boolean;
+  selectedFeatures: string[]; // Kept props for API compat, though not used here anymore
+  onToggleFeature: (feature: string) => void; // Kept props for API compat
 }
 
 const CategoryBadge = ({ category }: { category: string }) => {
@@ -23,7 +25,10 @@ const CategoryBadge = ({ category }: { category: string }) => {
   );
 };
 
-export const VideoAnalysisSection: React.FC<VideoAnalysisSectionProps> = ({ analysis, isLoading }) => {
+export const VideoAnalysisSection: React.FC<VideoAnalysisSectionProps> = ({ 
+    analysis, 
+    isLoading
+}) => {
   if (isLoading) {
     return (
       <div className="bg-slate-900/50 border border-slate-700 rounded-2xl p-6 mb-6 animate-pulse">
@@ -47,60 +52,54 @@ export const VideoAnalysisSection: React.FC<VideoAnalysisSectionProps> = ({ anal
     );
   }
 
-  if (!analysis || analysis.length === 0) return null;
+  if (!analysis) return null;
 
   return (
     <div className="bg-slate-900/80 border border-slate-700 rounded-2xl overflow-hidden mb-6 shadow-2xl">
       <div className="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
         <h3 className="text-lg font-bold text-white flex items-center gap-2">
           <AlignLeft className="w-5 h-5 text-purple-400" />
-          Video Scene Analysis
+          2. Video Scene Analysis
         </h3>
-        <span className="text-xs text-slate-500">{analysis.length} Scenes Detected</span>
+        <span className="text-xs text-slate-500">{analysis.scenes.length} Scenes Detected</span>
       </div>
 
-      <div className="max-h-[500px] overflow-y-auto custom-scrollbar p-6 space-y-4">
-        {analysis.map((scene, idx) => (
-          <div key={idx} className="flex gap-4 p-4 rounded-xl bg-slate-800/40 border border-slate-700/50 hover:border-purple-500/30 transition-colors">
-            {/* Screenshot */}
-            <div className="shrink-0 w-24 h-40 bg-black rounded-lg overflow-hidden border border-slate-700 relative group">
-              <img src={scene.screenshot} alt={`Scene ${idx + 1}`} className="w-full h-full object-cover" />
-              <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-sm text-white text-[10px] px-1.5 rounded">
-                {scene.startTime}
-              </div>
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 min-w-0 space-y-3">
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-slate-400">{scene.startTime} - {scene.endTime}</span>
-                  <CategoryBadge category={scene.category} />
+      <div className="p-6">
+        <h4 className="text-sm font-semibold text-slate-300 mb-3">Scene Breakdown</h4>
+        <div className="max-h-[500px] overflow-y-auto custom-scrollbar space-y-4 pr-2">
+            {analysis.scenes.map((scene, idx) => (
+            <div key={idx} className="flex gap-4 p-4 rounded-xl bg-slate-800/40 border border-slate-700/50 hover:border-purple-500/30 transition-colors">
+                {/* Screenshot */}
+                <div className="shrink-0 w-20 h-32 bg-black rounded-lg overflow-hidden border border-slate-700 relative group">
+                <img src={scene.screenshot} alt={`Scene ${idx + 1}`} className="w-full h-full object-cover" />
+                <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-sm text-white text-[10px] px-1.5 rounded">
+                    {scene.startTime}
                 </div>
-              </div>
+                </div>
 
-              <div className="space-y-2">
-                 {/* Transcript Original */}
-                 <div className="flex gap-2 items-start">
-                    <MessageSquare className="w-3 h-3 text-slate-500 mt-1 shrink-0" />
-                    <p className="text-xs text-slate-300 italic">"{scene.transcriptOriginal}"</p>
-                 </div>
-                 
-                 {/* Translation */}
-                 <div className="flex gap-2 items-start">
-                    <Globe className="w-3 h-3 text-blue-400 mt-1 shrink-0" />
-                    <p className="text-sm text-white font-medium">{scene.transcriptTranslation}</p>
-                 </div>
+                {/* Content */}
+                <div className="flex-1 min-w-0 space-y-2">
+                    <div className="flex justify-between items-start">
+                        <CategoryBadge category={scene.category} />
+                    </div>
 
-                 {/* Visual Description */}
-                 <div className="flex gap-2 items-start pt-1">
-                    <Play className="w-3 h-3 text-purple-400 mt-1 shrink-0" />
-                    <p className="text-xs text-slate-400 line-clamp-2">{scene.description}</p>
-                 </div>
-              </div>
+                    <div className="space-y-1.5">
+                        {/* Transcript Original */}
+                        <div className="flex gap-2 items-start">
+                            <MessageSquare className="w-3 h-3 text-slate-500 mt-1 shrink-0" />
+                            <p className="text-xs text-slate-300 italic line-clamp-2">"{scene.transcriptOriginal}"</p>
+                        </div>
+                        
+                        {/* Visual Description */}
+                        <div className="flex gap-2 items-start pt-1">
+                            <Play className="w-3 h-3 text-purple-400 mt-1 shrink-0" />
+                            <p className="text-xs text-slate-400 line-clamp-2">{scene.description}</p>
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
-        ))}
+            ))}
+        </div>
       </div>
     </div>
   );

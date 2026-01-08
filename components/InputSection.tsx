@@ -1,6 +1,6 @@
 import React from 'react';
-import { Upload, FileText, Globe, Clock, Sparkles, X, Trash2, Video, AlertCircle, Layers, ScanFace } from 'lucide-react';
-import { Language, Duration, AppState } from '../types';
+import { Upload, FileText, Sparkles, X, Trash2, Video, ScanFace } from 'lucide-react';
+import { AppState } from '../types';
 
 interface InputSectionProps {
   state: AppState;
@@ -11,10 +11,6 @@ interface InputSectionProps {
   onRemoveVideo: () => void;
   onAnalyzeVideo: () => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  onLanguageChange: (val: Language) => void;
-  onDurationChange: (val: Duration) => void;
-  onVariantCountChange: (val: number) => void;
-  onSubmit: () => void;
 }
 
 export const InputSection: React.FC<InputSectionProps> = ({
@@ -25,17 +21,13 @@ export const InputSection: React.FC<InputSectionProps> = ({
   onVideoChange,
   onRemoveVideo,
   onAnalyzeVideo,
-  onDescriptionChange,
-  onLanguageChange,
-  onDurationChange,
-  onVariantCountChange,
-  onSubmit
+  onDescriptionChange
 }) => {
   return (
     <div className="bg-slate-800/50 backdrop-blur-md border border-slate-700 rounded-2xl p-6 shadow-xl">
       <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
         <Sparkles className="w-5 h-5 text-purple-400" />
-        Configuration
+        Input Configuration
       </h2>
 
       <div className="space-y-8">
@@ -155,100 +147,26 @@ export const InputSection: React.FC<InputSectionProps> = ({
                 </div>
               </div>
               
-              {!state.videoAnalysis && (
-                  <button 
-                    onClick={onAnalyzeVideo}
-                    disabled={state.isAnalyzing}
-                    className="w-full py-2 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30 rounded-lg text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                  >
-                     {state.isAnalyzing ? <span className="animate-spin">⏳</span> : <ScanFace className="w-3 h-3" />}
-                     {state.isAnalyzing ? "Analyzing Video..." : "Analyze Video Structure"}
-                  </button>
-              )}
+              <button 
+                onClick={onAnalyzeVideo}
+                disabled={state.isAnalyzing || !!state.videoAnalysis}
+                className={`w-full py-2 rounded-lg text-xs flex items-center justify-center gap-2 transition-colors
+                   ${state.videoAnalysis 
+                      ? 'bg-green-500/20 text-green-300 border border-green-500/30 cursor-default' 
+                      : 'bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30 disabled:opacity-50'}
+                `}
+              >
+                  {state.isAnalyzing ? <span className="animate-spin">⏳</span> : (state.videoAnalysis ? <CheckIcon /> : <ScanFace className="w-3 h-3" />)}
+                  {state.isAnalyzing ? "Analyzing Video..." : (state.videoAnalysis ? "Analysis Complete" : "Analyze Video Structure")}
+              </button>
             </div>
           )}
         </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          {/* Language */}
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">
-              Language
-            </label>
-            <div className="relative">
-              <select
-                value={state.language}
-                onChange={(e) => onLanguageChange(e.target.value as Language)}
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-2 px-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none cursor-pointer"
-              >
-                {Object.values(Language).map((lang) => (
-                  <option key={lang} value={lang}>{lang}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Duration */}
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">
-              Duration
-            </label>
-            <div className="relative">
-              <select
-                value={state.duration}
-                onChange={(e) => onDurationChange(e.target.value as Duration)}
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-2 px-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none cursor-pointer"
-              >
-                {Object.values(Duration).map((dur) => (
-                  <option key={dur} value={dur}>{dur}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Quantity */}
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1">
-               <Layers className="w-3 h-3" /> Quantity
-            </label>
-            <div className="relative">
-              <select
-                value={state.variantCount}
-                onChange={(e) => onVariantCountChange(Number(e.target.value))}
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-2 px-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none cursor-pointer"
-              >
-                <option value={1}>1 Option</option>
-                <option value={2}>2 Options</option>
-                <option value={3}>3 Options</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Submit Button */}
-        <button
-          onClick={onSubmit}
-          disabled={state.isGenerating || state.productImages.length === 0 || !state.productDescription}
-          className={`
-            w-full py-3 px-4 rounded-xl font-semibold text-white shadow-lg transition-all duration-300
-            ${state.isGenerating || state.productImages.length === 0 || !state.productDescription
-              ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-              : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 hover:shadow-purple-500/25 active:scale-[0.98]'}
-          `}
-        >
-          {state.isGenerating ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Generating...
-            </span>
-          ) : (
-            "Generate Script & Prompt"
-          )}
-        </button>
       </div>
     </div>
   );
 };
+
+const CheckIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+);

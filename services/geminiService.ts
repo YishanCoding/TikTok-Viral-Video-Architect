@@ -1,5 +1,34 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { Language, Duration, ScriptRow, GeneratedContent, ScriptVariant, VideoScene } from "../types";
+import { Language, Duration, ScriptRow, GeneratedContent, ScriptVariant, VideoScene, VideoAnalysisResult } from "../types";
+
+// --- Helper: Retry with Exponential Backoff ---
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  retries: number = 5,
+  delay: number = 1000,
+  factor: number = 2
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    // Check for 503 Service Unavailable or "overloaded" messages
+    // robust check for different error structures
+    const isOverloaded = 
+      error?.status === 503 || 
+      error?.code === 503 || 
+      error?.error?.code === 503 ||
+      error?.error?.status === "UNAVAILABLE" ||
+      (error?.message && (error.message.includes('overloaded') || error.message.includes('UNAVAILABLE'))) ||
+      (JSON.stringify(error).includes('503') || JSON.stringify(error).includes('overloaded'));
+      
+    if (retries > 0 && isOverloaded) {
+      console.warn(`Model overloaded. Retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryWithBackoff(fn, retries - 1, delay * factor, factor);
+    }
+    throw error;
+  }
+}
 
 // --- Helper: Convert File to Base64 (Gemini Part) ---
 export const fileToGenerativePart = async (file: File): Promise<{ inlineData: { mimeType: string; data: string } }> => {
@@ -66,6 +95,83 @@ export const captureVideoFrames = async (videoFile: File, timestamps: { start: n
   });
 };
 
+// --- Helper: Compose 9-Grid Image (Canvas) ---
+export const composeNineGridImage = async (base64Images: string[]): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const canvas = document.createElement('canvas');
+        // Target: 9:16 Aspect Ratio (e.g., 1080x1920)
+        const totalWidth = 1080;
+        const totalHeight = 1920;
+        canvas.width = totalWidth;
+        canvas.height = totalHeight;
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            reject(new Error("Could not get canvas context"));
+            return;
+        }
+
+        // Fill background
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+        // Grid: 3 columns, 3 rows
+        // Cell size: 1080 / 3 = 360px width
+        // Cell height: 1920 / 3 = 640px height (matches 9:16 aspect ratio exactly for each cell!)
+        const cellW = totalWidth / 3;
+        const cellH = totalHeight / 3;
+
+        let loadedCount = 0;
+        const imagesToLoad = base64Images.slice(0, 9); // Take first 9
+        
+        if (imagesToLoad.length === 0) {
+            resolve("");
+            return;
+        }
+
+        imagesToLoad.forEach((src, idx) => {
+            const img = new Image();
+            img.onload = () => {
+                const col = idx % 3;
+                const row = Math.floor(idx / 3);
+                const x = col * cellW;
+                const y = row * cellH;
+                
+                // Draw image covering the cell
+                // Calculate aspect ratio to cover
+                const scale = Math.max(cellW / img.width, cellH / img.height);
+                const w = img.width * scale;
+                const h = img.height * scale;
+                const offsetX = x + (cellW - w) / 2;
+                const offsetY = y + (cellH - h) / 2;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(x, y, cellW, cellH);
+                ctx.clip();
+                ctx.drawImage(img, offsetX, offsetY, w, h);
+                ctx.restore();
+
+                loadedCount++;
+                if (loadedCount === imagesToLoad.length) {
+                    const finalBase64 = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+                    resolve(finalBase64);
+                }
+            };
+            img.onerror = (e) => {
+                console.error("Failed to load image for grid", e);
+                // Continue despite error
+                loadedCount++;
+                if (loadedCount === imagesToLoad.length) {
+                     const finalBase64 = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+                     resolve(finalBase64);
+                }
+            };
+            img.src = `data:image/jpeg;base64,${src}`;
+        });
+    });
+};
+
 // --- API: Generate White Background Product Grid (Step 1) ---
 export const generateProductGrid = async (imageParts: any[], description: string): Promise<string> => {
   try {
@@ -85,7 +191,7 @@ export const generateProductGrid = async (imageParts: any[], description: string
       No text overlays, No props, just the product.
     `;
 
-    const response = await ai.models.generateContent({
+    const response = await retryWithBackoff(() => ai.models.generateContent({
       model: 'gemini-3-pro-image-preview', // High quality for reference
       contents: {
         parts: [
@@ -99,7 +205,7 @@ export const generateProductGrid = async (imageParts: any[], description: string
           imageSize: "4K"
         }
       }
-    });
+    }));
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
@@ -114,16 +220,16 @@ export const generateProductGrid = async (imageParts: any[], description: string
 };
 
 // --- API: Analyze Video Content ---
-export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoScene, 'screenshot'>[]> => {
+export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoAnalysisResult, 'scenes'> & { scenes: any[] }> => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const videoPart = await fileToGenerativePart(videoFile);
 
-    // Added stronger instructions for audio transcription
     const prompt = `
       Analyze this TikTok video in detail. Focus on both VISUALS and AUDIO.
       
       CRITICAL INSTRUCTION: You MUST LISTEN to the audio track and provide a word-for-word transcript.
+      Also extract key product features or selling points mentioned or shown.
       
       Break it down into scenes/shots. For each scene, provide:
       1. start_time (seconds, float)
@@ -132,6 +238,8 @@ export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoSc
       4. description (Visual description)
       5. transcript_original (Exact spoken words in original language. If silence/music, say "[Music]")
       6. transcript_translation (Translate spoken words to Simplified Chinese)
+
+      Also provide a list of "extracted_features" found in the video. For each feature, provide the English text and a Simplified Chinese translation.
 
       Return strictly JSON.
     `;
@@ -153,12 +261,24 @@ export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoSc
             },
             required: ["start_time", "end_time", "category", "description", "transcript_original", "transcript_translation"]
           }
+        },
+        extracted_features: {
+            type: Type.ARRAY,
+            items: { 
+                type: Type.OBJECT,
+                properties: {
+                    text: { type: Type.STRING },
+                    translation: { type: Type.STRING }
+                },
+                required: ["text", "translation"]
+            },
+            description: "List of key selling points or features identified in the video with translations"
         }
       },
-      required: ["scenes"]
+      required: ["scenes", "extracted_features"]
     };
 
-    const response = await ai.models.generateContent({
+    const response = await retryWithBackoff(() => ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [videoPart, { text: prompt }] },
       config: {
@@ -166,7 +286,7 @@ export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoSc
         responseMimeType: "application/json",
         responseSchema: responseSchema
       }
-    });
+    }));
 
     const data = JSON.parse(response.text || "{}");
     
@@ -177,7 +297,7 @@ export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoSc
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
-    return data.scenes.map((s: any) => ({
+    const formattedScenes = data.scenes.map((s: any) => ({
       startTime: formatTime(s.start_time),
       endTime: formatTime(s.end_time),
       category: s.category,
@@ -187,13 +307,18 @@ export const analyzeVideoContent = async (videoFile: File): Promise<Omit<VideoSc
       rawStartTime: s.start_time // Keep raw for seeking
     }));
 
+    return {
+        scenes: formattedScenes,
+        features: data.extracted_features || []
+    };
+
   } catch (error) {
     console.error("Analysis failed:", error);
     throw error;
   }
 };
 
-// --- API: Generate Single Scene Image (Nano Banana) with Reference ---
+// --- API: Generate Single Scene Image ---
 export const generateSceneImage = async (visualDescription: string, referenceImageBase64: string | null): Promise<string> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
@@ -207,29 +332,28 @@ export const generateSceneImage = async (visualDescription: string, referenceIma
       });
     }
 
-    // UPDATED PROMPT: Authenticity, Handheld, Messy, US Home
     const prompt = `
       Generate a single photorealistic 9:16 vertical TikTok video frame.
       
       Scene Description: ${visualDescription}
       
       IMPORTANT STYLE CONSTRAINTS (Strict Adherence):
-      1. Setting: Real, lived-in American home (e.g., slightly messy bathroom counter, cluttered kitchen table, bedroom with clothes). NOT a studio.
-      2. Camera: Handheld iPhone aesthetic. Slightly grainy, imperfect lighting, maybe a bit blurry or motion blur to suggest movement.
-      3. Vibe: Amateur UGC (User Generated Content), authentic, relatable. NOT commercial/ad-like.
+      1. Composition: FULL FRAME, IMMERSIVE. The image must fill the entire 9:16 canvas. DO NOT generate white borders, letterboxing, or floating objects in empty space.
+      2. Setting: Real, lived-in American home (e.g., slightly messy bathroom counter, cluttered kitchen table, bedroom with clothes). NOT a studio.
+      3. Camera: Handheld iPhone aesthetic. Slightly grainy, imperfect lighting, maybe a bit blurry or motion blur to suggest movement.
+      4. Vibe: Amateur UGC (User Generated Content), authentic, relatable. NOT commercial/ad-like.
       
       PRODUCT INTEGRATION:
-      If the scene description mentions the product, it must look exactly like the reference image provided.
-      If the scene description is a general situation (e.g. "dirty laundry pile"), show that situation authentically without forced product placement unless specified.
+      If the scene description mentions the product, it must look exactly like the reference image provided, but integrated naturally into the environment.
     `;
 
     parts.push({ text: prompt });
 
-    const response = await ai.models.generateContent({
+    const response = await retryWithBackoff(() => ai.models.generateContent({
         model: 'gemini-2.5-flash-image', // Nano Banana
         contents: { parts: parts },
         config: {}
-    });
+    }));
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
         if (part.inlineData) {
@@ -273,11 +397,11 @@ export const regenerateScriptRow = async (
          }
     };
 
-    const response = await ai.models.generateContent({
+    const response = await retryWithBackoff(() => ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: { responseMimeType: "application/json", responseSchema }
-    });
+    }));
 
     const data = JSON.parse(response.text || "{}");
     return {
@@ -291,11 +415,12 @@ export const regenerateScriptRow = async (
 };
 
 /**
- * Step 2: Generate the Script and Sora Prompt (Updated to use Analysis)
+ * Step 2: Generate the Script and Sora Prompt
  */
 export const generateScriptAndPrompt = async (
   imageParts: any[],
-  analysisData: VideoScene[] | null,
+  analysisData: VideoAnalysisResult | null,
+  selectedFeatures: string[],
   description: string, 
   language: Language, 
   duration: Duration,
@@ -308,30 +433,31 @@ export const generateScriptAndPrompt = async (
     let analysisContext = "";
     if (analysisData) {
         analysisContext = `
-        REFERENCE VIDEO ANALYSIS (Use this structure as a proven viral template):
-        ${analysisData.map(s => `[${s.startTime}-${s.endTime}] (${s.category}):
+        REFERENCE VIDEO ANALYSIS (Use this pacing and structure):
+        ${analysisData.scenes.map(s => `[${s.startTime}-${s.endTime}] (${s.category}):
            Visual: ${s.description}
            Audio: ${s.transcriptOriginal}
         `).join('\n')}
+        
+        KEY SELLING POINTS TO INTEGRATE (User Selected):
+        ${selectedFeatures.map((f, i) => `${i+1}. ${f}`).join('\n')}
         `;
     }
 
-    // UPDATED SYSTEM INSTRUCTION: US UGC Authenticity & Audio-Visual Sync
     const systemInstruction = `
       You are a world-class TikTok E-commerce Short Video Expert targeting the US Market.
       Your goal is to create ${count} DISTINCT high-converting UGC video scripts.
       
       CRITICAL STYLE GUIDELINES (US UGC):
-      1. Setting: Authentic US homes (messy, lived-in). Avoid sterile studios.
-      2. Vibe: Handheld, amateur, relatable, "Lazy Girl Hack" style.
+      1. Setting: Authentic US homes (messy, lived-in).
+      2. Vibe: Handheld, amateur, relatable.
       3. Visual Strategy: STRICT AUDIO-VISUAL ALIGNMENT.
-         - If audio discusses a "pain point" (e.g., "I hate washing underwear"), the Visual MUST show the action of washing underwear or a pile of dirty clothes. DO NOT show the product yet.
-         - Only show the product when the audio introduces the solution.
+      4. INTEGRATION: You MUST naturally weave the "User Selected Selling Points" into the script, adapting the reference video's structure to fit this specific product.
       
       CONSTRAINTS:
       1. Language: STRICTLY output the script audio in ${language}.
       2. Duration: Each script must fit exactly into ${durationSec} seconds.
-      3. Translations: Provide Simplified Chinese translations for Visuals, Audio, and the Sora Prompt.
+      3. Translations: Provide Simplified Chinese translations.
     `;
 
     let userPrompt = `
@@ -342,7 +468,6 @@ export const generateScriptAndPrompt = async (
       Task 2: Create a corresponding Sora-2 Prompt for each script.
     `;
 
-    // UPDATED SCHEMA: Include translations
     const responseSchema: Schema = {
       type: Type.OBJECT,
       properties: {
@@ -379,7 +504,7 @@ export const generateScriptAndPrompt = async (
 
     const parts = [...imageParts, { text: userPrompt }];
 
-    const response = await ai.models.generateContent({
+    const response = await retryWithBackoff(() => ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts },
       config: {
@@ -387,12 +512,11 @@ export const generateScriptAndPrompt = async (
         responseMimeType: "application/json",
         responseSchema
       }
-    });
+    }));
 
     const jsonText = response.text;
     const parsed = JSON.parse(jsonText);
     
-    // Map response to internal types
     return parsed.variants.map((v: any) => ({
       id: crypto.randomUUID(),
       name: v.name,
@@ -413,44 +537,4 @@ export const generateScriptAndPrompt = async (
     console.error("Error generating scripts:", error);
     throw error;
   }
-};
-
-/**
- * Orchestrator function 
- */
-export const generateCampaign = async (
-  files: File[],
-  analysisData: VideoScene[] | null,
-  description: string,
-  language: Language,
-  duration: Duration,
-  count: number
-): Promise<GeneratedContent> => {
-  const imageParts = await Promise.all(files.map(fileToGenerativePart));
-  
-  // Step 1: Generate White Background Product Grid
-  const productReferenceBase64 = await generateProductGrid(imageParts, description);
-
-  // Step 2: Generate Scripts based on images + analysis
-  const variants = await generateScriptAndPrompt(imageParts, analysisData, description, language, duration, count);
-
-  return {
-    productReferenceBase64,
-    visualAssetBase64: null, // Generated later
-    variants
-  };
-};
-
-// Legacy exports...
-export const regenerateVisualsOnly = async (files: File[], description: string) => { return ""; };
-export const regenerateStrategyOnly = async (
-  files: File[],
-  analysisData: VideoScene[] | null,
-  description: string,
-  language: Language,
-  duration: Duration,
-  count: number
-) => {
-  const imageParts = await Promise.all(files.map(fileToGenerativePart));
-  return generateScriptAndPrompt(imageParts, analysisData, description, language, duration, count);
 };

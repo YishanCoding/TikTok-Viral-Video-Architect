@@ -28,6 +28,16 @@ export interface ScriptVariant {
   soraPromptTranslation: string; // New: Simplified Chinese
 }
 
+export interface FeatureItem {
+  text: string;
+  translation: string;
+}
+
+export interface VideoAnalysisResult {
+  scenes: VideoScene[];
+  features: FeatureItem[]; // Extracted selling points with translation
+}
+
 export interface VideoScene {
   startTime: string; // "00:00"
   endTime: string;   // "00:04"
@@ -36,6 +46,7 @@ export interface VideoScene {
   category: 'Product Info' | 'Usage' | 'Benefits' | 'Hook' | 'CTA' | 'Other';
   transcriptOriginal: string;
   transcriptTranslation: string; // Simplifed Chinese
+  rawStartTime: number;
 }
 
 export interface GeneratedContent {
@@ -51,7 +62,8 @@ export interface HistoryItem {
   productImagePreviews: string[];
   referenceVideo: File | null;
   referenceVideoPreview: string | null;
-  videoAnalysis: VideoScene[] | null; // Store analysis
+  videoAnalysis: VideoAnalysisResult | null;
+  selectedFeatures: string[];
   productDescription: string;
   language: Language;
   duration: Duration;
@@ -67,16 +79,18 @@ export interface AppState {
   
   // Analysis State
   isAnalyzing: boolean;
-  videoAnalysis: VideoScene[] | null;
+  videoAnalysis: VideoAnalysisResult | null;
+  selectedFeatures: string[];
 
   productDescription: string;
   language: Language;
   duration: Duration;
   variantCount: number; 
   
-  isGenerating: boolean;
-  isRegeneratingVisual: boolean; 
-  isRegeneratingStrategy: boolean; 
+  // Granular Generation States
+  isGeneratingProductGrid: boolean;
+  isGeneratingScripts: boolean;
+  isComposingFinalGrid: boolean;
   
   generatedContent: GeneratedContent | null;
   history: HistoryItem[]; 
