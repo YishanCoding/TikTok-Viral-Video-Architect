@@ -207,15 +207,20 @@ export const generateSceneImage = async (visualDescription: string, referenceIma
       });
     }
 
+    // UPDATED PROMPT: Authenticity, Handheld, Messy, US Home
     const prompt = `
       Generate a single photorealistic 9:16 vertical TikTok video frame.
       
       Scene Description: ${visualDescription}
       
-      IMPORTANT CONSTRAINT: 
-      The product in the generated image MUST LOOK EXACTLY like the product in the provided Reference Image.
-      Use the Reference Image as the ground truth for product appearance (color, shape, logo, material).
-      Style: iPhone UGC, authentic, high quality.
+      IMPORTANT STYLE CONSTRAINTS (Strict Adherence):
+      1. Setting: Real, lived-in American home (e.g., slightly messy bathroom counter, cluttered kitchen table, bedroom with clothes). NOT a studio.
+      2. Camera: Handheld iPhone aesthetic. Slightly grainy, imperfect lighting, maybe a bit blurry or motion blur to suggest movement.
+      3. Vibe: Amateur UGC (User Generated Content), authentic, relatable. NOT commercial/ad-like.
+      
+      PRODUCT INTEGRATION:
+      If the scene description mentions the product, it must look exactly like the reference image provided.
+      If the scene description is a general situation (e.g. "dirty laundry pile"), show that situation authentically without forced product placement unless specified.
     `;
 
     parts.push({ text: prompt });
@@ -241,8 +246,9 @@ export const regenerateScriptRow = async (
     language: string
 ): Promise<ScriptRow> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
     const prompt = `
-        Regenerate this specific script row to be more engaging.
+        Regenerate this specific script row to be more engaging for a US TikTok audience.
         Context of video: ${context}
         
         Current Row:
@@ -250,14 +256,19 @@ export const regenerateScriptRow = async (
         Visual: ${originalRow.visual}
         Audio: ${originalRow.audio}
         
-        Task: Rewrite the Visual and Audio (in ${language}). Keep timeframe same.
+        Task: 
+        1. Rewrite the Visual and Audio (in ${language}).
+        2. Provide Simplified Chinese translations for both.
+        3. Visuals must be "show, don't tell". If audio describes a problem, visual shows the problem, not the product.
     `;
 
     const responseSchema: Schema = {
          type: Type.OBJECT,
          properties: {
              visual: { type: Type.STRING },
+             visual_translation: { type: Type.STRING },
              audio: { type: Type.STRING },
+             audio_translation: { type: Type.STRING },
              style: { type: Type.STRING }
          }
     };
@@ -272,7 +283,9 @@ export const regenerateScriptRow = async (
     return {
         ...originalRow,
         visual: data.visual,
+        visualTranslation: data.visual_translation,
         audio: data.audio,
+        audioTranslation: data.audio_translation,
         style: data.style
     };
 };
@@ -292,7 +305,6 @@ export const generateScriptAndPrompt = async (
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const durationSec = duration === Duration.SHORT ? 15 : 25;
     
-    // Construct Analysis Context String
     let analysisContext = "";
     if (analysisData) {
         analysisContext = `
@@ -304,15 +316,22 @@ export const generateScriptAndPrompt = async (
         `;
     }
 
+    // UPDATED SYSTEM INSTRUCTION: US UGC Authenticity & Audio-Visual Sync
     const systemInstruction = `
-      You are a world-class TikTok E-commerce Short Video Expert.
+      You are a world-class TikTok E-commerce Short Video Expert targeting the US Market.
       Your goal is to create ${count} DISTINCT high-converting UGC video scripts.
+      
+      CRITICAL STYLE GUIDELINES (US UGC):
+      1. Setting: Authentic US homes (messy, lived-in). Avoid sterile studios.
+      2. Vibe: Handheld, amateur, relatable, "Lazy Girl Hack" style.
+      3. Visual Strategy: STRICT AUDIO-VISUAL ALIGNMENT.
+         - If audio discusses a "pain point" (e.g., "I hate washing underwear"), the Visual MUST show the action of washing underwear or a pile of dirty clothes. DO NOT show the product yet.
+         - Only show the product when the audio introduces the solution.
       
       CONSTRAINTS:
       1. Language: STRICTLY output the script audio in ${language}.
       2. Duration: Each script must fit exactly into ${durationSec} seconds.
-      3. Tone: Authentic, native TikTok creator style.
-      ${analysisData ? "4. Structure: STRICTLY FOLLOW the pacing and category flow of the Reference Video Analysis provided." : ""}
+      3. Translations: Provide Simplified Chinese translations for Visuals, Audio, and the Sora Prompt.
     `;
 
     let userPrompt = `
@@ -323,6 +342,7 @@ export const generateScriptAndPrompt = async (
       Task 2: Create a corresponding Sora-2 Prompt for each script.
     `;
 
+    // UPDATED SCHEMA: Include translations
     const responseSchema: Schema = {
       type: Type.OBJECT,
       properties: {
@@ -338,16 +358,19 @@ export const generateScriptAndPrompt = async (
                   type: Type.OBJECT,
                   properties: {
                     timeframe: { type: Type.STRING },
-                    visual: { type: Type.STRING },
-                    audio: { type: Type.STRING },
+                    visual: { type: Type.STRING, description: "Description of the scene in English" },
+                    visual_translation: { type: Type.STRING, description: "Simplified Chinese translation of visual" },
+                    audio: { type: Type.STRING, description: "Spoken audio in target language" },
+                    audio_translation: { type: Type.STRING, description: "Simplified Chinese translation of audio" },
                     style: { type: Type.STRING }
                   },
-                  required: ["timeframe", "visual", "audio", "style"]
+                  required: ["timeframe", "visual", "visual_translation", "audio", "audio_translation", "style"]
                 }
               },
-              soraPrompt: { type: Type.STRING }
+              soraPrompt: { type: Type.STRING, description: "English prompt" },
+              sora_prompt_translation: { type: Type.STRING, description: "Simplified Chinese translation of prompt" }
             },
-            required: ["name", "script", "soraPrompt"]
+            required: ["name", "script", "soraPrompt", "sora_prompt_translation"]
           }
         }
       },
@@ -369,10 +392,21 @@ export const generateScriptAndPrompt = async (
     const jsonText = response.text;
     const parsed = JSON.parse(jsonText);
     
+    // Map response to internal types
     return parsed.variants.map((v: any) => ({
-      ...v,
       id: crypto.randomUUID(),
-      script: v.script.map((s: any) => ({ ...s, id: crypto.randomUUID() })) // Ensure IDs for rows
+      name: v.name,
+      soraPrompt: v.soraPrompt,
+      soraPromptTranslation: v.sora_prompt_translation,
+      script: v.script.map((s: any) => ({
+        id: crypto.randomUUID(),
+        timeframe: s.timeframe,
+        visual: s.visual,
+        visualTranslation: s.visual_translation,
+        audio: s.audio,
+        audioTranslation: s.audio_translation,
+        style: s.style
+      }))
     }));
 
   } catch (error) {

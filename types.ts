@@ -12,7 +12,9 @@ export interface ScriptRow {
   id: string; // Unique ID for regeneration targeting
   timeframe: string;
   visual: string;
+  visualTranslation: string; // New: Simplified Chinese
   audio: string;
+  audioTranslation: string; // New: Simplified Chinese
   style: string;
   generatedVisual?: string | null; // Base64 of the Nano Banana image
   isRegenerating?: boolean;
@@ -23,6 +25,7 @@ export interface ScriptVariant {
   name: string;
   script: ScriptRow[];
   soraPrompt: string;
+  soraPromptTranslation: string; // New: Simplified Chinese
 }
 
 export interface VideoScene {
@@ -36,8 +39,8 @@ export interface VideoScene {
 }
 
 export interface GeneratedContent {
-  productReferenceBase64: string | null; // New: Step 1 White background product grid
-  visualAssetBase64: string | null; // The Final 9-grid storyboard (composed later)
+  productReferenceBase64: string | null; // Step 1 White background product grid
+  visualAssetBase64: string | null; // The Final 9-grid storyboard
   variants: ScriptVariant[]; 
 }
 

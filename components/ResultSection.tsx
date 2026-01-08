@@ -31,6 +31,7 @@ export const ResultSection: React.FC<ResultSectionProps> = ({
 
   const handleCopyCombined = () => {
      if (!activeVariant) return;
+     // Only copy English/Original content, ignore translations
      const scriptText = activeVariant.script.map(s => 
       `[${s.timeframe}] Scene: ${s.visual} | Audio: "${s.audio}"`
     ).join('\n');
@@ -204,13 +205,27 @@ ${scriptText}`;
                                            Rewrite
                                         </button>
                                     </div>
-                                    <div className="text-sm text-slate-300 mb-2">
-                                      <span className="text-slate-500 text-xs uppercase font-bold mr-2">Visual:</span> 
-                                      {row.visual}
+                                    
+                                    {/* Visual Text */}
+                                    <div className="mb-3">
+                                        <div className="text-sm text-slate-300">
+                                            <span className="text-slate-500 text-xs uppercase font-bold mr-2">Visual:</span> 
+                                            {row.visual}
+                                        </div>
+                                        {row.visualTranslation && (
+                                            <div className="text-xs text-slate-500 mt-1 pl-10">
+                                                {row.visualTranslation}
+                                            </div>
+                                        )}
                                     </div>
+
+                                    {/* Audio Text */}
                                     <div className="bg-slate-800/50 p-2 rounded border-l-2 border-green-500/50">
                                       <p className="text-xs text-slate-400 mb-1">Audio ({state.language})</p>
                                       <p className="text-sm font-medium text-white italic">"{row.audio}"</p>
+                                      {row.audioTranslation && (
+                                          <p className="text-xs text-slate-500 italic mt-1">"{row.audioTranslation}"</p>
+                                      )}
                                     </div>
                                 </div>
                             </div>
@@ -243,7 +258,7 @@ ${scriptText}`;
                   : 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/20'}
               `}
             >
-              {copied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy Full</>}
+              {copied ? <><Check className="w-3 h-3" /> Copied (English Only)!</> : <><Copy className="w-3 h-3" /> Copy Full (EN)</>}
             </button>
         </div>
         <div className="p-6 bg-slate-900/20">
@@ -252,6 +267,11 @@ ${scriptText}`;
                     <div className="bg-black/30 p-4 rounded-xl border border-slate-700/50 min-h-[100px] text-sm text-purple-200 font-mono whitespace-pre-wrap">
                         {activeVariant.soraPrompt}
                     </div>
+                    {activeVariant.soraPromptTranslation && (
+                        <div className="mt-2 pl-2 text-xs text-slate-500 font-mono border-l-2 border-slate-700">
+                            {activeVariant.soraPromptTranslation}
+                        </div>
+                    )}
                     <div className="mt-4 text-[10px] text-slate-500">
                         * Use the Image Grid generated below as the start_image for this prompt.
                     </div>
