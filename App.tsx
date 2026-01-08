@@ -2,8 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { InputSection } from './components/InputSection';
 import { ResultSection } from './components/ResultSection';
 import { HistorySection } from './components/HistorySection';
-import { AppState, Language, Duration, HistoryItem } from './types';
-import { generateCampaign, regenerateVisualsOnly, regenerateStrategyOnly } from './services/geminiService';
+import { VideoAnalysisSection } from './components/VideoAnalysisSection';
+import { AppState, Language, Duration, HistoryItem, VideoScene, ScriptRow } from './types';
+import { 
+    generateCampaign, 
+    regenerateVisualsOnly, 
+    regenerateStrategyOnly, 
+    analyzeVideoContent, 
+    captureVideoFrames, 
+    generateSceneImage,
+    regenerateScriptRow
+} from './services/geminiService';
 import { Play, Key, AlertTriangle } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -15,10 +24,14 @@ const App: React.FC = () => {
     productImagePreviews: [],
     referenceVideo: null,
     referenceVideoPreview: null,
+    
+    isAnalyzing: false,
+    videoAnalysis: null,
+
     productDescription: '',
     language: Language.ENGLISH,
     duration: Duration.SHORT,
-    variantCount: 1, // Default to 1
+    variantCount: 1, 
     isGenerating: false,
     isRegeneratingVisual: false,
     isRegeneratingStrategy: false,
@@ -34,7 +47,6 @@ const App: React.FC = () => {
         const has = await window.aistudio.hasSelectedApiKey();
         setHasApiKey(has);
       } else {
-        // If running outside of the specific environment, assume env var is set
         setHasApiKey(true);
       }
       setIsKeyCheckLoading(false);
@@ -46,19 +58,29 @@ const App: React.FC = () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
       setHasApiKey(true);
-      // Clear any previous errors
       setState(prev => ({ ...prev, error: null }));
     }
   };
 
+  const handleError = (error: any) => {
+     console.error(error);
+      let errorMessage = "Failed to generate content.";
+      const errorStr = JSON.stringify(error);
+      if (errorStr.includes('403') || errorStr.includes('PERMISSION_DENIED')) {
+         errorMessage = "Permission Denied: Access to Gemini models requires a paid API Key. Please click 'Change API Key'.";
+      } else {
+         errorMessage = "An error occurred. Please try again later.";
+      }
+      return errorMessage;
+  };
+
+  // --- File Handlers ---
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = Array.from(e.target.files) as File[];
-      
-      // Process previews
       const newPreviews: string[] = [];
       let processedCount = 0;
-
       newFiles.forEach((file) => {
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -86,11 +108,7 @@ const App: React.FC = () => {
   };
 
   const handleRemoveAllImages = () => {
-    setState((prev) => ({
-      ...prev,
-      productImages: [],
-      productImagePreviews: [],
-    }));
+    setState((prev) => ({ ...prev, productImages: [], productImagePreviews: [] }));
   };
 
   const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -100,49 +118,53 @@ const App: React.FC = () => {
       setState(prev => ({
         ...prev,
         referenceVideo: file,
-        referenceVideoPreview: url
+        referenceVideoPreview: url,
+        videoAnalysis: null // Reset analysis on new video
       }));
     }
   };
 
   const handleRemoveVideo = () => {
-    if (state.referenceVideoPreview) {
-      URL.revokeObjectURL(state.referenceVideoPreview);
-    }
+    if (state.referenceVideoPreview) URL.revokeObjectURL(state.referenceVideoPreview);
     setState(prev => ({
       ...prev,
       referenceVideo: null,
-      referenceVideoPreview: null
+      referenceVideoPreview: null,
+      videoAnalysis: null
     }));
   };
 
-  const handleRestoreHistory = (item: HistoryItem) => {
-    setState(prev => ({
-      ...prev,
-      productImages: item.productImages,
-      productImagePreviews: item.productImagePreviews,
-      referenceVideo: item.referenceVideo,
-      referenceVideoPreview: item.referenceVideoPreview,
-      productDescription: item.productDescription,
-      language: item.language,
-      duration: item.duration,
-      variantCount: item.variantCount,
-      generatedContent: item.generatedContent,
-      error: null
-    }));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // --- Logic Handlers ---
 
-  const handleError = (error: any) => {
-     console.error(error);
-      let errorMessage = "Failed to generate content.";
-      const errorStr = JSON.stringify(error);
-      if (errorStr.includes('403') || errorStr.includes('PERMISSION_DENIED')) {
-         errorMessage = "Permission Denied: The 'Gemini 3 Pro' model (4K images) requires a paid API Key. Please click 'Change API Key' below to select a project with billing enabled.";
-      } else {
-         errorMessage = "An error occurred. Please try again later.";
-      }
-      return errorMessage;
+  const handleAnalyzeVideo = async () => {
+    if (!state.referenceVideo) return;
+    setState(prev => ({ ...prev, isAnalyzing: true, error: null }));
+    
+    try {
+        // 1. Get structured data from Gemini
+        const rawAnalysis = await analyzeVideoContent(state.referenceVideo);
+        
+        // 2. Extract timestamps for frame capture
+        const captureTargets = rawAnalysis.map(s => ({ start: (s as any).rawStartTime }));
+        
+        // 3. Capture frames
+        const screenshots = await captureVideoFrames(state.referenceVideo, captureTargets);
+
+        // 4. Merge
+        const finalAnalysis: VideoScene[] = rawAnalysis.map((scene, idx) => ({
+            ...scene,
+            screenshot: screenshots[idx] || ''
+        }));
+
+        setState(prev => ({
+            ...prev,
+            isAnalyzing: false,
+            videoAnalysis: finalAnalysis
+        }));
+
+    } catch (error) {
+        setState(prev => ({ ...prev, isAnalyzing: false, error: handleError(error) }));
+    }
   };
 
   const handleSubmit = async () => {
@@ -153,7 +175,7 @@ const App: React.FC = () => {
     try {
       const content = await generateCampaign(
         state.productImages,
-        state.referenceVideo,
+        state.videoAnalysis, // Pass analysis instead of raw video
         state.productDescription,
         state.language,
         state.duration,
@@ -167,6 +189,7 @@ const App: React.FC = () => {
         productImagePreviews: state.productImagePreviews,
         referenceVideo: state.referenceVideo,
         referenceVideoPreview: state.referenceVideoPreview,
+        videoAnalysis: state.videoAnalysis,
         productDescription: state.productDescription,
         language: state.language,
         duration: state.duration,
@@ -181,30 +204,28 @@ const App: React.FC = () => {
         history: [newItem, ...prev.history]
       }));
     } catch (error: any) {
-      setState((prev) => ({
-        ...prev,
-        isGenerating: false,
-        error: handleError(error),
-      }));
+      setState((prev) => ({ ...prev, isGenerating: false, error: handleError(error) }));
     }
   };
 
-  const handleRegenerateVisual = async () => {
-    if (!state.generatedContent) return;
-    setState(prev => ({ ...prev, isRegeneratingVisual: true, error: null }));
-    try {
-        const newVisual = await regenerateVisualsOnly(state.productImages, state.productDescription);
-        setState(prev => ({
-            ...prev,
-            isRegeneratingVisual: false,
-            generatedContent: prev.generatedContent ? {
-                ...prev.generatedContent,
-                visualAssetBase64: newVisual
-            } : null
-        }));
-    } catch (error) {
-        setState(prev => ({ ...prev, isRegeneratingVisual: false, error: handleError(error) }));
-    }
+  // --- Result Action Handlers ---
+
+  const handleRestoreHistory = (item: HistoryItem) => {
+    setState(prev => ({
+      ...prev,
+      productImages: item.productImages,
+      productImagePreviews: item.productImagePreviews,
+      referenceVideo: item.referenceVideo,
+      referenceVideoPreview: item.referenceVideoPreview,
+      videoAnalysis: item.videoAnalysis,
+      productDescription: item.productDescription,
+      language: item.language,
+      duration: item.duration,
+      variantCount: item.variantCount,
+      generatedContent: item.generatedContent,
+      error: null
+    }));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleRegenerateStrategy = async () => {
@@ -213,7 +234,7 @@ const App: React.FC = () => {
     try {
         const newVariants = await regenerateStrategyOnly(
             state.productImages,
-            state.referenceVideo,
+            state.videoAnalysis,
             state.productDescription,
             state.language,
             state.duration,
@@ -232,13 +253,93 @@ const App: React.FC = () => {
     }
   };
 
+  const handleGenerateSceneVisual = async (variantIndex: number, rowIndex: number, visualDesc: string) => {
+    // Optimistic Update: Set row loading state
+    updateRowState(variantIndex, rowIndex, { isRegenerating: true });
+    
+    try {
+        // Get the reference image from state
+        const refImage = state.generatedContent?.productReferenceBase64 || null;
+        
+        const base64Image = await generateSceneImage(visualDesc, refImage);
+        updateRowState(variantIndex, rowIndex, { isRegenerating: false, generatedVisual: base64Image });
+    } catch (error) {
+        console.error(error);
+        updateRowState(variantIndex, rowIndex, { isRegenerating: false });
+    }
+  };
+
+  const handleRegenerateRow = async (variantIndex: number, rowIndex: number) => {
+    if (!state.generatedContent) return;
+    updateRowState(variantIndex, rowIndex, { isRegenerating: true });
+    
+    try {
+        const variant = state.generatedContent.variants[variantIndex];
+        const row = variant.script[rowIndex];
+        const context = `Product: ${state.productDescription}. Full Script so far: ${variant.script.map(s => s.visual).join(' | ')}`;
+        
+        const newRow = await regenerateScriptRow(row, context, state.language);
+        
+        // Update state with new row
+        setState(prev => {
+            if (!prev.generatedContent) return prev;
+            const newVariants = [...prev.generatedContent.variants];
+            newVariants[variantIndex].script[rowIndex] = { ...newRow, isRegenerating: false };
+            return {
+                ...prev,
+                generatedContent: { ...prev.generatedContent, variants: newVariants }
+            };
+        });
+
+    } catch (error) {
+        updateRowState(variantIndex, rowIndex, { isRegenerating: false });
+    }
+  };
+
+  const handleGenerateAllVisuals = async (variantIndex: number) => {
+      if (!state.generatedContent) return;
+      const variant = state.generatedContent.variants[variantIndex];
+      
+      // Mark all as loading
+      variant.script.forEach((_, idx) => {
+          if(!variant.script[idx].generatedVisual) updateRowState(variantIndex, idx, { isRegenerating: true });
+      });
+
+      // Process in parallel (batches of 3 to not hit rate limits too hard)
+      // For simplicity in this demo, we do loop
+      for (let i = 0; i < variant.script.length; i++) {
+          const row = variant.script[i];
+          if (!row.generatedVisual) {
+              await handleGenerateSceneVisual(variantIndex, i, row.visual);
+          }
+      }
+  };
+
+  // Helper to deep update a row
+  const updateRowState = (vIdx: number, rIdx: number, updates: Partial<ScriptRow>) => {
+      setState(prev => {
+          if (!prev.generatedContent) return prev;
+          const newVariants = [...prev.generatedContent.variants];
+          const newScript = [...newVariants[vIdx].script];
+          newScript[rIdx] = { ...newScript[rIdx], ...updates };
+          newVariants[vIdx] = { ...newVariants[vIdx], script: newScript };
+          return {
+              ...prev,
+              generatedContent: { ...prev.generatedContent, variants: newVariants }
+          };
+      });
+  };
+
+  // Placeholder for old visual regen if needed, but we mostly use scene-based now
+  const handleRegenerateVisual = () => {}; 
+
   if (isKeyCheckLoading) {
     return <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
       <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-purple-500"></div>
     </div>;
   }
 
-  // Landing Screen if no Key
+  // Landing Screen
   if (!hasApiKey && window.aistudio) {
     return (
       <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-4">
@@ -257,9 +358,6 @@ const App: React.FC = () => {
             <Key className="w-5 h-5" />
             Connect Google API Key
           </button>
-          <p className="text-xs text-slate-500 mt-4">
-            Requires a project with billing enabled for Gemini 3 Pro access.
-          </p>
         </div>
       </div>
     );
@@ -281,12 +379,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-4">
              {window.aistudio && (
-                <button 
-                  onClick={handleConnectKey}
-                  className="text-xs font-medium text-slate-400 hover:text-white transition-colors"
-                >
-                  Change Key
-                </button>
+                <button onClick={handleConnectKey} className="text-xs font-medium text-slate-400 hover:text-white">Change Key</button>
              )}
              <div className="text-xs font-medium px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400">
                 Gemini 3.0 Pro
@@ -303,12 +396,7 @@ const App: React.FC = () => {
              <div className="flex-1">
                <p className="text-red-400 text-sm font-medium">{state.error}</p>
                {state.error.includes("Permission Denied") && window.aistudio && (
-                 <button 
-                   onClick={handleConnectKey}
-                   className="mt-2 text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-1.5 rounded-lg border border-red-500/20 transition-colors"
-                 >
-                   Change API Key
-                 </button>
+                 <button onClick={handleConnectKey} className="mt-2 text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-1.5 rounded-lg">Change API Key</button>
                )}
              </div>
           </div>
@@ -326,6 +414,7 @@ const App: React.FC = () => {
                 onRemoveAllImages={handleRemoveAllImages}
                 onVideoChange={handleVideoChange}
                 onRemoveVideo={handleRemoveVideo}
+                onAnalyzeVideo={handleAnalyzeVideo}
                 onDescriptionChange={(e) => setState(prev => ({ ...prev, productDescription: e.target.value }))}
                 onLanguageChange={(val) => setState(prev => ({ ...prev, language: val }))}
                 onDurationChange={(val) => setState(prev => ({ ...prev, duration: val }))}
@@ -337,46 +426,49 @@ const App: React.FC = () => {
                 history={state.history} 
                 onRestore={handleRestoreHistory} 
               />
-              
-              <div className="mt-6 p-4 rounded-xl bg-slate-800/30 border border-slate-800 text-xs text-slate-500 leading-relaxed">
-                <p className="font-semibold text-slate-400 mb-1">How it works:</p>
-                <ol className="list-decimal list-inside space-y-1">
-                  <li>Upload raw product images.</li>
-                  <li><strong>Optional:</strong> Upload a viral reference video.</li>
-                  <li>AI generates a <strong>4K (9:16)</strong> visual base.</li>
-                  <li>AI creates up to 3 viral strategies & Sora prompts.</li>
-                </ol>
-              </div>
             </div>
           </div>
 
           {/* Right Column: Results */}
           <div className="lg:col-span-8">
+             
+             {/* New: Video Analysis Section */}
+             <VideoAnalysisSection 
+                analysis={state.videoAnalysis} 
+                isLoading={state.isAnalyzing} 
+             />
+
              {state.generatedContent ? (
                <ResultSection 
                  state={state} 
                  onRegenerateVisual={handleRegenerateVisual}
                  onRegenerateStrategy={handleRegenerateStrategy}
+                 onGenerateSceneVisual={handleGenerateSceneVisual}
+                 onRegenerateRow={handleRegenerateRow}
+                 onGenerateAllVisuals={handleGenerateAllVisuals}
                />
              ) : (
-               <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/30">
-                 {!state.isGenerating ? (
-                   <>
-                     <Play className="w-16 h-16 mb-4 opacity-20" />
-                     <p className="text-lg">Ready to generate your campaign</p>
-                     <p className="text-sm opacity-60">Fill out the form on the left to begin</p>
-                   </>
-                 ) : (
-                   <>
-                    <div className="relative w-16 h-16 mb-4">
-                      <div className="absolute inset-0 border-4 border-slate-700 rounded-full"></div>
-                      <div className="absolute inset-0 border-4 border-t-purple-500 rounded-full animate-spin"></div>
-                    </div>
-                    <p className="text-lg text-purple-200 animate-pulse">Designing Campaign...</p>
-                    <p className="text-sm text-slate-500 mt-2">Analyzing video, rendering 4K assets & writing script</p>
-                   </>
-                 )}
-               </div>
+               !state.isAnalyzing && !state.videoAnalysis && (
+                <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/30">
+                    {!state.isGenerating ? (
+                    <>
+                        <Play className="w-16 h-16 mb-4 opacity-20" />
+                        <p className="text-lg">Ready to generate your campaign</p>
+                        <p className="text-sm opacity-60">Upload video & analyze, or fill inputs to begin</p>
+                    </>
+                    ) : (
+                    <>
+                        <div className="relative w-16 h-16 mb-4">
+                        <div className="absolute inset-0 border-4 border-slate-700 rounded-full"></div>
+                        <div className="absolute inset-0 border-4 border-t-purple-500 rounded-full animate-spin"></div>
+                        </div>
+                        <p className="text-lg text-purple-200 animate-pulse">Designing Campaign...</p>
+                        <p className="text-sm text-slate-500 mt-2">1. Generating Product Reference Grid...</p>
+                        <p className="text-sm text-slate-500">2. Analyzing Video & Strategy...</p>
+                    </>
+                    )}
+                </div>
+               )
              )}
           </div>
 

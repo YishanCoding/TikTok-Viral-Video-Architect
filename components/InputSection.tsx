@@ -1,5 +1,5 @@
 import React from 'react';
-import { Upload, FileText, Globe, Clock, Sparkles, X, Trash2, Video, AlertCircle, Layers } from 'lucide-react';
+import { Upload, FileText, Globe, Clock, Sparkles, X, Trash2, Video, AlertCircle, Layers, ScanFace } from 'lucide-react';
 import { Language, Duration, AppState } from '../types';
 
 interface InputSectionProps {
@@ -9,6 +9,7 @@ interface InputSectionProps {
   onRemoveAllImages: () => void;
   onVideoChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onRemoveVideo: () => void;
+  onAnalyzeVideo: () => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onLanguageChange: (val: Language) => void;
   onDurationChange: (val: Duration) => void;
@@ -23,6 +24,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
   onRemoveAllImages,
   onVideoChange,
   onRemoveVideo,
+  onAnalyzeVideo,
   onDescriptionChange,
   onLanguageChange,
   onDurationChange,
@@ -36,12 +38,29 @@ export const InputSection: React.FC<InputSectionProps> = ({
         Configuration
       </h2>
 
-      <div className="space-y-6">
-        {/* Product Images Upload */}
+      <div className="space-y-8">
+        
+        {/* 1. Description (Moved to Top) */}
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-2">
+            1. Product Description & Selling Points
+          </label>
+          <div className="relative">
+            <FileText className="absolute top-3 left-3 w-4 h-4 text-slate-500" />
+            <textarea
+              value={state.productDescription}
+              onChange={onDescriptionChange}
+              placeholder="e.g. A waterproof hiking backpack with anti-theft pockets..."
+              className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-2 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent min-h-[100px] resize-none"
+            />
+          </div>
+        </div>
+
+        {/* 2. Product Images Upload */}
         <div>
           <div className="flex justify-between items-center mb-2">
              <label className="block text-sm font-medium text-slate-300">
-              Product Images
+              2. Product Images
             </label>
             {state.productImagePreviews.length > 0 && (
               <button 
@@ -94,10 +113,10 @@ export const InputSection: React.FC<InputSectionProps> = ({
           )}
         </div>
 
-        {/* Reference Video Upload */}
+        {/* 3. Reference Video Upload */}
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
-            Reference Viral Video
+            3. Reference Viral Video
             <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/30">Analysis</span>
           </label>
           
@@ -116,46 +135,38 @@ export const InputSection: React.FC<InputSectionProps> = ({
                </div>
              </div>
           ) : (
-            <div className="relative rounded-xl overflow-hidden border border-slate-600 bg-slate-900">
-              <video 
-                src={state.referenceVideoPreview || ''} 
-                className="w-full h-32 object-cover opacity-60" 
-                controls={false}
-              />
-              <div className="absolute inset-0 flex items-center justify-center flex-col bg-black/40">
-                <p className="text-sm font-medium text-white mb-2 truncate max-w-[90%] px-4">
-                  {state.referenceVideo.name}
-                </p>
-                <button
-                  onClick={onRemoveVideo}
-                  className="bg-red-500/80 hover:bg-red-600 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors backdrop-blur-sm"
-                >
-                  <Trash2 className="w-3 h-3" /> Remove Video
-                </button>
+            <div className="space-y-2">
+              <div className="relative rounded-xl overflow-hidden border border-slate-600 bg-slate-900">
+                <video 
+                  src={state.referenceVideoPreview || ''} 
+                  className="w-full h-32 object-cover opacity-60" 
+                  controls={false}
+                />
+                <div className="absolute inset-0 flex items-center justify-center flex-col bg-black/40">
+                  <p className="text-sm font-medium text-white mb-2 truncate max-w-[90%] px-4">
+                    {state.referenceVideo.name}
+                  </p>
+                  <button
+                    onClick={onRemoveVideo}
+                    className="bg-red-500/80 hover:bg-red-600 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors backdrop-blur-sm"
+                  >
+                    <Trash2 className="w-3 h-3" /> Remove Video
+                  </button>
+                </div>
               </div>
+              
+              {!state.videoAnalysis && (
+                  <button 
+                    onClick={onAnalyzeVideo}
+                    disabled={state.isAnalyzing}
+                    className="w-full py-2 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30 rounded-lg text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                     {state.isAnalyzing ? <span className="animate-spin">⏳</span> : <ScanFace className="w-3 h-3" />}
+                     {state.isAnalyzing ? "Analyzing Video..." : "Analyze Video Structure"}
+                  </button>
+              )}
             </div>
           )}
-          
-          <div className="mt-2 flex items-start gap-2 text-xs text-yellow-500/80 bg-yellow-500/10 p-2 rounded-lg border border-yellow-500/20">
-             <AlertCircle className="w-4 h-4 shrink-0" />
-             <p>Upload a "Best Seller" video here. The AI will analyze its hook, pacing, and transitions.</p>
-          </div>
-        </div>
-
-        {/* Description */}
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">
-            Product Description & Selling Points
-          </label>
-          <div className="relative">
-            <FileText className="absolute top-3 left-3 w-4 h-4 text-slate-500" />
-            <textarea
-              value={state.productDescription}
-              onChange={onDescriptionChange}
-              placeholder="e.g. A waterproof hiking backpack with anti-theft pockets..."
-              className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-2 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent min-h-[100px] resize-none"
-            />
-          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
@@ -231,10 +242,10 @@ export const InputSection: React.FC<InputSectionProps> = ({
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Generating Assets...
+              Generating...
             </span>
           ) : (
-            "Generate Strategy"
+            "Generate Script & Prompt"
           )}
         </button>
       </div>

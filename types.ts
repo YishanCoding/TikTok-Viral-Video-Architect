@@ -9,10 +9,13 @@ export enum Duration {
 }
 
 export interface ScriptRow {
+  id: string; // Unique ID for regeneration targeting
   timeframe: string;
   visual: string;
   audio: string;
   style: string;
+  generatedVisual?: string | null; // Base64 of the Nano Banana image
+  isRegenerating?: boolean;
 }
 
 export interface ScriptVariant {
@@ -22,9 +25,20 @@ export interface ScriptVariant {
   soraPrompt: string;
 }
 
+export interface VideoScene {
+  startTime: string; // "00:00"
+  endTime: string;   // "00:04"
+  screenshot: string; // Base64
+  description: string; // Content summary
+  category: 'Product Info' | 'Usage' | 'Benefits' | 'Hook' | 'CTA' | 'Other';
+  transcriptOriginal: string;
+  transcriptTranslation: string; // Simplifed Chinese
+}
+
 export interface GeneratedContent {
-  visualAssetBase64: string | null; // The 9-grid image
-  variants: ScriptVariant[]; // Array of script/prompt variations
+  productReferenceBase64: string | null; // New: Step 1 White background product grid
+  visualAssetBase64: string | null; // The Final 9-grid storyboard (composed later)
+  variants: ScriptVariant[]; 
 }
 
 export interface HistoryItem {
@@ -34,6 +48,7 @@ export interface HistoryItem {
   productImagePreviews: string[];
   referenceVideo: File | null;
   referenceVideoPreview: string | null;
+  videoAnalysis: VideoScene[] | null; // Store analysis
   productDescription: string;
   language: Language;
   duration: Duration;
@@ -45,14 +60,21 @@ export interface AppState {
   productImages: File[];
   productImagePreviews: string[];
   referenceVideo: File | null; 
-  referenceVideoPreview: string | null; 
+  referenceVideoPreview: string | null;
+  
+  // Analysis State
+  isAnalyzing: boolean;
+  videoAnalysis: VideoScene[] | null;
+
   productDescription: string;
   language: Language;
   duration: Duration;
-  variantCount: number; // New: Number of variants to generate
+  variantCount: number; 
+  
   isGenerating: boolean;
-  isRegeneratingVisual: boolean; // New: Loading state for visual regen
-  isRegeneratingStrategy: boolean; // New: Loading state for strategy regen
+  isRegeneratingVisual: boolean; 
+  isRegeneratingStrategy: boolean; 
+  
   generatedContent: GeneratedContent | null;
   history: HistoryItem[]; 
   error: string | null;
