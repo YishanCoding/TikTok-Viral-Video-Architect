@@ -67,6 +67,7 @@ export interface HistoryItem {
   productDescription: string;
   language: Language;
   duration: Duration;
+  sceneCount: number;
   variantCount: number;
   generatedContent: GeneratedContent; 
 }
@@ -85,6 +86,7 @@ export interface AppState {
   productDescription: string;
   language: Language;
   duration: Duration;
+  sceneCount: number;
   variantCount: number; 
   
   // Granular Generation States

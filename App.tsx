@@ -11,7 +11,8 @@ import {
     captureVideoFrames, 
     generateSceneImage,
     regenerateScriptRow,
-    composeNineGridImage
+    composeNineGridImage,
+    fileToGenerativePart // Ensure this is imported
 } from './services/geminiService';
 import { Play, Key, AlertTriangle } from 'lucide-react';
 
@@ -32,6 +33,7 @@ const App: React.FC = () => {
     productDescription: '',
     language: Language.ENGLISH,
     duration: Duration.SHORT,
+    sceneCount: 5, // Default scene count
     variantCount: 1, 
     
     // Granular states
@@ -70,10 +72,18 @@ const App: React.FC = () => {
      console.error(error);
       let errorMessage = "Failed to generate content.";
       const errorStr = JSON.stringify(error);
+      
+      // Extract specific API Refusal messages we added in geminiService
+      if (error?.message && error.message.includes("AI Refusal:")) {
+          return error.message; // "AI Refusal: I cannot generate images of..."
+      }
+      
       if (errorStr.includes('403') || errorStr.includes('PERMISSION_DENIED')) {
          errorMessage = "Permission Denied: Access to Gemini models requires a paid API Key. Please click 'Change API Key'.";
-      } else {
-         errorMessage = "An error occurred. Please try again later.";
+      } else if (errorStr.includes('503') || errorStr.includes('overloaded')) {
+         errorMessage = "Service Overloaded: The AI is busy. Please try again in a moment.";
+      } else if (error?.message) {
+         errorMessage = error.message;
       }
       return errorMessage;
   };
@@ -189,10 +199,10 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, isGeneratingProductGrid: true, error: null }));
       
       try {
-          const imageParts = await Promise.all(state.productImages.map(file => 
-             // Import dynamically or assume service is available
-             import('./services/geminiService').then(mod => mod.fileToGenerativePart(file))
-          ));
+          // Fixed: Removed unnecessary dynamic import, use the imported helper directly
+          const imageParts = await Promise.all(
+            state.productImages.map(file => fileToGenerativePart(file))
+          );
           
           const gridBase64 = await generateProductGrid(imageParts, state.productDescription);
           
@@ -216,9 +226,10 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, isGeneratingScripts: true, error: null }));
 
       try {
-          const imageParts = await Promise.all(state.productImages.map(file => 
-             import('./services/geminiService').then(mod => mod.fileToGenerativePart(file))
-          ));
+          // Fixed: Removed unnecessary dynamic import
+          const imageParts = await Promise.all(
+            state.productImages.map(file => fileToGenerativePart(file))
+          );
 
           const variants = await generateScriptAndPrompt(
               imageParts,
@@ -227,6 +238,7 @@ const App: React.FC = () => {
               state.productDescription,
               state.language,
               state.duration,
+              state.sceneCount, // Passed sceneCount
               state.variantCount
           );
 
@@ -285,6 +297,7 @@ const App: React.FC = () => {
       productDescription: item.productDescription,
       language: item.language,
       duration: item.duration,
+      sceneCount: item.sceneCount || 5, // Fallback for old history items
       variantCount: item.variantCount,
       generatedContent: item.generatedContent,
       error: null
@@ -302,6 +315,7 @@ const App: React.FC = () => {
     } catch (error) {
         console.error(error);
         updateRowState(variantIndex, rowIndex, { isRegenerating: false });
+        // Optional: show error toast here if needed
     }
   };
 
@@ -480,6 +494,7 @@ const App: React.FC = () => {
                  onToggleFeature={handleToggleFeature}
                  onLanguageChange={(val) => setState(prev => ({ ...prev, language: val }))}
                  onDurationChange={(val) => setState(prev => ({ ...prev, duration: val }))}
+                 onSceneCountChange={(val) => setState(prev => ({ ...prev, sceneCount: val }))}
                  onVariantCountChange={(val) => setState(prev => ({ ...prev, variantCount: val }))}
                />
           </div>

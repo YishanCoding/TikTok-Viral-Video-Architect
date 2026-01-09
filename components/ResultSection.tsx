@@ -14,6 +14,7 @@ interface ResultSectionProps {
   onToggleFeature: (feature: string) => void;
   onLanguageChange: (val: Language) => void;
   onDurationChange: (val: Duration) => void;
+  onSceneCountChange: (val: number) => void;
   onVariantCountChange: (val: number) => void;
 }
 
@@ -29,6 +30,7 @@ export const ResultSection: React.FC<ResultSectionProps> = ({
   onToggleFeature,
   onLanguageChange,
   onDurationChange,
+  onSceneCountChange,
   onVariantCountChange
 }) => {
   const [copied, setCopied] = React.useState(false);
@@ -193,7 +195,7 @@ ${scriptText}`;
 
             {/* Controls Row */}
             <div className="flex flex-col sm:flex-row gap-4 items-end">
-                <div className="flex-1 w-full grid grid-cols-3 gap-3">
+                <div className="flex-1 w-full grid grid-cols-4 gap-3">
                     {/* Language */}
                     <div>
                         <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Language</label>
@@ -222,9 +224,23 @@ ${scriptText}`;
                         </select>
                     </div>
 
+                    {/* Scene Count (New) */}
+                    <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Scenes</label>
+                        <select
+                            value={state.sceneCount || 5}
+                            onChange={(e) => onSceneCountChange(Number(e.target.value))}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2 px-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        >
+                            {[3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                <option key={n} value={n}>{n} Scenes</option>
+                            ))}
+                        </select>
+                    </div>
+
                     {/* Quantity */}
                     <div>
-                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Quantity</label>
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Variants</label>
                         <select
                             value={state.variantCount}
                             onChange={(e) => onVariantCountChange(Number(e.target.value))}
