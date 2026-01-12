@@ -67,7 +67,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
           <div className="relative group">
             <input
               type="file"
-              accept="image/*"
+              accept="image/*,.heic,.HEIC"
               multiple
               onChange={onFileChange}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -80,6 +80,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
             `}>
               <Upload className="w-8 h-8 text-slate-400 mb-3 group-hover:text-purple-400 transition-colors" />
               <p className="text-sm text-slate-400">Click to upload product images</p>
+              <p className="text-[10px] text-slate-500 mt-1">Supports JPG, PNG, HEIC</p>
             </div>
           </div>
 

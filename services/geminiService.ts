@@ -9,18 +9,53 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 export async function fileToGenerativePart(file: File): Promise<{ inlineData: { data: string; mimeType: string } }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    
     reader.onloadend = () => {
+      // 1. Check for FileReader errors
+      if (reader.error) {
+        reject(new Error(`FileReader failed: ${reader.error.message}`));
+        return;
+      }
+
+      // 2. Check for null result
       const base64Data = reader.result as string;
-      const base64Content = base64Data.split(',')[1];
+      if (!base64Data) {
+        reject(new Error("FileReader result is empty or null"));
+        return;
+      }
+
+      // 3. Safe split
+      const parts = base64Data.split(',');
+      if (parts.length < 2) {
+         reject(new Error("Invalid Data URL format from FileReader"));
+         return;
+      }
+      
+      const base64Content = parts[1];
+      
+      let mimeType = file.type;
+      if (!mimeType || mimeType === "") {
+        if (file.name.toLowerCase().endsWith(".heic")) mimeType = "image/heic";
+        else if (file.name.toLowerCase().endsWith(".heif")) mimeType = "image/heif";
+        else if (file.name.toLowerCase().endsWith(".webp")) mimeType = "image/webp";
+        // Fallback or leave empty to let API infer/fail
+      }
+
       resolve({
         inlineData: {
           data: base64Content,
-          mimeType: file.type,
+          mimeType: mimeType || file.type || "application/octet-stream", 
         },
       });
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+
+    reader.onerror = () => reject(new Error(`FileReader error event: ${reader.error?.message}`));
+    
+    try {
+      reader.readAsDataURL(file);
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
@@ -59,8 +94,11 @@ export async function analyzeVideoContent(videoFile: File): Promise<VideoAnalysi
           required: ["text", "translation"],
         },
       },
+      visualStyle: { type: Type.STRING, description: "e.g., High-Key Minimalist, Gritty Urban" },
+      pacing: { type: Type.STRING, description: "e.g., Fast-paced, Slow & Emotional" },
+      colorGrade: { type: Type.STRING, description: "e.g., Warm Vintage, Cool Cyberpunk" },
     },
-    required: ["scenes", "features"],
+    required: ["scenes", "features", "visualStyle", "pacing", "colorGrade"],
   };
 
   const response = await ai.models.generateContent({
@@ -68,7 +106,7 @@ export async function analyzeVideoContent(videoFile: File): Promise<VideoAnalysi
     contents: {
       parts: [
         videoPart,
-        { text: "Analyze this video. Break it down into scenes. Extract key selling points/features. Translate transcripts and features to Simplified Chinese." }
+        { text: "Analyze this video. Break it down into scenes. Extract key selling points/features. Translate transcripts and features to Simplified Chinese. Analyze the overall visual style, pacing, and color grading." }
       ]
     },
     config: {
@@ -87,7 +125,6 @@ export async function analyzeVideoContent(videoFile: File): Promise<VideoAnalysi
 // --- Image Generation (Product Grid) ---
 
 export async function generateProductGrid(imageParts: any[], description: string): Promise<string> {
-  // Updated prompt for 9-grid layout with strict image adherence
   const prompt = `
     Create a "9-grid reference sheet" (3x3 grid layout) based STRICTLY on the provided product images.
     
@@ -105,7 +142,7 @@ export async function generateProductGrid(imageParts: any[], description: string
   `;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-image-preview', // Pro model follows complex instructions (like grid layout) better
+    model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
         ...imageParts,
@@ -114,8 +151,8 @@ export async function generateProductGrid(imageParts: any[], description: string
     },
     config: {
       imageConfig: {
-        aspectRatio: "9:16", // Changed to 9:16 Vertical
-        imageSize: "4K" // Use 4K for high detail in grids
+        aspectRatio: "9:16",
+        imageSize: "4K"
       }
     }
   });
@@ -159,11 +196,14 @@ export async function generateScriptAndPrompt(
               timeframe: { type: Type.STRING },
               visual: { type: Type.STRING },
               visualTranslation: { type: Type.STRING },
+              shotType: { type: Type.STRING, description: "e.g., Extreme Close-up, Wide Angle" },
+              movement: { type: Type.STRING, description: "e.g., Slow Pan Right, Handheld Shake" },
+              lighting: { type: Type.STRING, description: "e.g., Golden Hour, Studio Softbox" },
               audio: { type: Type.STRING },
               audioTranslation: { type: Type.STRING },
               style: { type: Type.STRING },
             },
-            required: ["id", "timeframe", "visual", "visualTranslation", "audio", "audioTranslation", "style"]
+            required: ["id", "timeframe", "visual", "visualTranslation", "shotType", "movement", "lighting", "audio", "audioTranslation", "style"]
           }
         }
       },
@@ -172,7 +212,7 @@ export async function generateScriptAndPrompt(
   };
 
   const prompt = `
-    You are a viral TikTok content strategist.
+    You are a viral TikTok content strategist and director.
     Based on the reference video structure and the selected features, create ${variantCount} distinct script variants for the product.
     
     Product Description: ${productDescription}
@@ -183,6 +223,11 @@ export async function generateScriptAndPrompt(
     
     Reference Video Structure (Emulate this flow):
     ${JSON.stringify(analysis.scenes.map(s => `${s.category}: ${s.description}`))}
+    
+    Reference Style:
+    - Pacing: ${analysis.pacing}
+    - Visual Style: ${analysis.visualStyle}
+    - Color Grade: ${analysis.colorGrade}
 
     MANDATORY CONSISTENCY RULES:
     1. Define a specific PERSONA for the protagonist (e.g., "Mike, 30s, bearded dad") at the start.
@@ -192,9 +237,10 @@ export async function generateScriptAndPrompt(
        - If the persona is Female, 'style' MUST start with "Female".
 
     For each variant:
-    1. Create a "soraPrompt" for video generation (Sora-2 style).
+    1. Create a "soraPrompt" for video generation (Sora-2 style), incorporating the visual style and color grade.
     2. Create a script breakdown with ${sceneCount} scenes.
-    3. Include translations for Chinese (Simplified).
+    3. FILL IN DIRECTOR DETAILS: shotType, movement, lighting for each scene.
+    4. Include translations for Chinese (Simplified).
   `;
 
   const response = await ai.models.generateContent({
@@ -222,7 +268,7 @@ export async function generateScriptAndPrompt(
 // --- Scene Visual Generation ---
 
 export async function generateSceneImage(visualDesc: string, refImageBase64: string | null): Promise<string> {
-  const parts: any[] = [{ text: `Generate a photorealistic vertical (9:16) scene: ${visualDesc}` }];
+  const parts: any[] = [{ text: `Generate a photorealistic vertical (9:16) scene. Description: ${visualDesc}` }];
   
   if (refImageBase64) {
     parts.unshift({
@@ -259,11 +305,14 @@ export async function regenerateScriptRow(row: ScriptRow, context: string, langu
       timeframe: { type: Type.STRING },
       visual: { type: Type.STRING },
       visualTranslation: { type: Type.STRING },
+      shotType: { type: Type.STRING },
+      movement: { type: Type.STRING },
+      lighting: { type: Type.STRING },
       audio: { type: Type.STRING },
       audioTranslation: { type: Type.STRING },
       style: { type: Type.STRING },
     },
-    required: ["id", "timeframe", "visual", "visualTranslation", "audio", "audioTranslation", "style"]
+    required: ["id", "timeframe", "visual", "visualTranslation", "shotType", "movement", "lighting", "audio", "audioTranslation", "style"]
   };
 
   const prompt = `
@@ -275,6 +324,7 @@ export async function regenerateScriptRow(row: ScriptRow, context: string, langu
     IMPORTANT: Maintain the same Character Persona and Gender from the context.
     If the context implies a Male speaker, keep the audio style Male.
     If the context implies a Female speaker, keep the audio style Female.
+    Provide detailed director notes (shotType, movement, lighting).
   `;
 
   const response = await ai.models.generateContent({
@@ -332,7 +382,7 @@ export async function composeNineGridImage(visuals: string[]): Promise<string> {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error("No canvas context");
 
-    // Updated: Create a 9:16 Vertical Canvas (1080x1920) for the final storyboard
+    // 9:16 Vertical Canvas (1080x1920) for the final storyboard
     const totalWidth = 1080;
     const totalHeight = 1920;
     
@@ -343,7 +393,7 @@ export async function composeNineGridImage(visuals: string[]): Promise<string> {
     const rows = 3;
     // Calculate cell size based on 9:16 total
     const cellWidth = totalWidth / cols; // 360px
-    const cellHeight = totalHeight / rows; // 640px (Resulting cells are also 9:16)
+    const cellHeight = totalHeight / rows; // 640px
     
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);

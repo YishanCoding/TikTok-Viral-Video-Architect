@@ -1,3 +1,4 @@
+
 export enum Language {
   ENGLISH = 'English',
   SPANISH = 'Spanish'
@@ -11,10 +12,16 @@ export enum Duration {
 export interface ScriptRow {
   id: string; // Unique ID for regeneration targeting
   timeframe: string;
-  visual: string;
-  visualTranslation: string; // New: Simplified Chinese
+  visual: string; // The main action description
+  visualTranslation: string; // Simplified Chinese
+  
+  // New Director Details
+  shotType: string; // e.g., "Extreme Close-up", "Wide Angle"
+  movement: string; // e.g., "Slow Pan Right", "Handheld Shake"
+  lighting: string; // e.g., "Golden Hour", "Studio Softbox"
+  
   audio: string;
-  audioTranslation: string; // New: Simplified Chinese
+  audioTranslation: string; // Simplified Chinese
   style: string;
   generatedVisual?: string | null; // Base64 of the Nano Banana image
   isRegenerating?: boolean;
@@ -36,6 +43,11 @@ export interface FeatureItem {
 export interface VideoAnalysisResult {
   scenes: VideoScene[];
   features: FeatureItem[]; // Extracted selling points with translation
+  
+  // New Global Analysis Fields
+  visualStyle: string; // e.g., "High-Key Minimalist", "Gritty Urban"
+  pacing: string; // e.g., "Fast-paced, energetic", "Slow, emotional"
+  colorGrade: string; // e.g., "Warm Vintage", "Cool Cyberpunk"
 }
 
 export interface VideoScene {

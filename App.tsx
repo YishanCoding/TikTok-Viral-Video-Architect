@@ -69,60 +69,125 @@ const App: React.FC = () => {
   };
 
   const handleError = (error: any) => {
-     console.error(error);
-      let errorMessage = "Failed to generate content.";
-      const errorStr = JSON.stringify(error);
-      
-      // Extract specific API Refusal messages we added in geminiService
-      if (error?.message && error.message.includes("AI Refusal:")) {
-          return error.message; // "AI Refusal: I cannot generate images of..."
-      }
-      
-      if (errorStr.includes('403') || errorStr.includes('PERMISSION_DENIED')) {
-         errorMessage = "Permission Denied: Access to Gemini models requires a paid API Key. Please click 'Change API Key'.";
-      } else if (errorStr.includes('503') || errorStr.includes('overloaded')) {
-         errorMessage = "Service Overloaded: The AI is busy. Please try again in a moment.";
-      } else if (error?.message) {
-         errorMessage = error.message;
-      }
-      return errorMessage;
+     console.error("App Error:", error);
+     
+     // 1. Direct String
+     if (typeof error === 'string') return error;
+
+     // 2. AI Refusals
+     if (error?.message && error.message.includes("AI Refusal:")) {
+         return error.message; 
+     }
+
+     // 3. Serialize to check for hidden properties/API codes
+     // Use Object.getOwnPropertyNames to capture Error properties like 'message', 'stack' that are not enumerable by default
+     const errorStr = JSON.stringify(error, Object.getOwnPropertyNames(error));
+     
+     if (errorStr.includes('403') || errorStr.includes('PERMISSION_DENIED')) {
+         return "Permission Denied: Access to Gemini models requires a paid API Key. Please click 'Change API Key'.";
+     } 
+     
+     if (errorStr.includes('503') || errorStr.includes('overloaded') || errorStr.includes('429')) {
+         return "Service Overloaded: The AI is busy. Please try again in a moment.";
+     }
+
+     // 4. Standard Message property
+     if (error?.message) {
+         return error.message;
+     }
+
+     return "Failed to generate content. Please check the console for details.";
   };
 
   // --- File Handlers ---
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const newFiles = Array.from(e.target.files) as File[];
+      const rawFiles = Array.from(e.target.files) as File[];
+      const newFiles: File[] = [];
       const newPreviews: string[] = [];
-      let processedCount = 0;
-      newFiles.forEach((file) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          newPreviews.push(reader.result as string);
-          processedCount++;
-          if (processedCount === newFiles.length) {
-            setState((prev) => ({
-              ...prev,
-              productImages: [...prev.productImages, ...newFiles],
-              productImagePreviews: [...prev.productImagePreviews, ...newPreviews],
-            }));
-          }
-        };
-        reader.readAsDataURL(file);
-      });
+
+      // Process/Convert files (Handle HEIC)
+      for (const file of rawFiles) {
+         const isHeic = file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic';
+         
+         if (isHeic) {
+             try {
+                 // @ts-ignore
+                 if (!window.heic2any) {
+                     console.warn("heic2any library not loaded, skipping conversion.");
+                     throw new Error("Library missing");
+                 }
+                 
+                 // @ts-ignore
+                 const blobOrBlobs = await window.heic2any({ 
+                     blob: file, 
+                     toType: "image/jpeg",
+                     quality: 0.8
+                 });
+                 
+                 const blob = Array.isArray(blobOrBlobs) ? blobOrBlobs[0] : blobOrBlobs;
+                 const convertedFile = new File(
+                     [blob], 
+                     file.name.replace(/\.[^/.]+$/, ".jpg"), 
+                     { type: "image/jpeg" }
+                 );
+                 
+                 newFiles.push(convertedFile);
+                 
+                 // Use Object URL for preview (Faster & Reliable than FileReader base64)
+                 newPreviews.push(URL.createObjectURL(convertedFile));
+
+             } catch (err: any) {
+                 // If conversion fails (common with some HEIC variants), fallback gracefully
+                 console.warn(`HEIC conversion skipped for ${file.name} (using original). Error details:`, err);
+                 
+                 newFiles.push(file); // Keep original HEIC for API (Gemini supports it)
+                 
+                 // Use a placeholder SVG for the preview since browsers can't render HEIC
+                 const placeholder = `data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3e%3crect width='100' height='100' fill='%231e293b'/%3e%3ctext x='50' y='50' font-family='sans-serif' font-size='14' fill='%2394a3b8' text-anchor='middle' dy='.3em'%3eHEIC%3c/text%3e%3c/svg%3e`;
+                 newPreviews.push(placeholder);
+             }
+         } else {
+             // Standard Image
+             newFiles.push(file);
+             // Use Object URL for preview
+             newPreviews.push(URL.createObjectURL(file));
+         }
+      }
+
+      setState((prev) => ({
+        ...prev,
+        productImages: [...prev.productImages, ...newFiles],
+        productImagePreviews: [...prev.productImagePreviews, ...newPreviews],
+      }));
     }
   };
 
   const handleRemoveImage = (index: number) => {
-    setState((prev) => ({
-      ...prev,
-      productImages: prev.productImages.filter((_, i) => i !== index),
-      productImagePreviews: prev.productImagePreviews.filter((_, i) => i !== index),
-    }));
+    setState((prev) => {
+      // Optional: Revoke Object URL to release memory if it's a blob url
+      const previewUrl = prev.productImagePreviews[index];
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(previewUrl);
+      }
+
+      return {
+        ...prev,
+        productImages: prev.productImages.filter((_, i) => i !== index),
+        productImagePreviews: prev.productImagePreviews.filter((_, i) => i !== index),
+      };
+    });
   };
 
   const handleRemoveAllImages = () => {
-    setState((prev) => ({ ...prev, productImages: [], productImagePreviews: [] }));
+    setState((prev) => {
+        // Revoke all blob urls
+        prev.productImagePreviews.forEach(url => {
+            if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+        });
+        return { ...prev, productImages: [], productImagePreviews: [] };
+    });
   };
 
   const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -172,7 +237,11 @@ const App: React.FC = () => {
         setState(prev => ({
             ...prev,
             isAnalyzing: false,
-            videoAnalysis: { scenes: finalScenes, features: rawAnalysis.features },
+            videoAnalysis: { 
+              ...rawAnalysis, // Include visualStyle, pacing, colorGrade
+              scenes: finalScenes, 
+              // features: rawAnalysis.features // Included in spread
+            },
             selectedFeatures: featureKeys
         }));
 
